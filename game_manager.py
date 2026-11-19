@@ -11,46 +11,86 @@ class QuizGame:
         self.state_file = state_file
         self.quizzes, self.best_score, self.has_played = self.load_state()
 
-    def load_state(self):
-        default_list = [
+    def _build_default_quizzes(self):
+        return [
             Quiz(q.question, list(q.choices), q.answer) for q in default_quizzes
         ]
-        if os.path.exists(self.state_file):
-            try:
-                with open(self.state_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
 
-                if isinstance(data, dict):
-                    raw_quizzes = data.get("quizzes")
-                    raw_best = data.get("best_score", 0)
-                    raw_played = data.get("has_played", False)
+    def _parse_quizzes(self, raw_quizzes):
+        if not isinstance(raw_quizzes, list) or not raw_quizzes:
+            return None
 
-                    if isinstance(raw_quizzes, list) and raw_quizzes:
-                        quizzes = [
-                            Quiz(item["question"], item["choices"], item["answer"])
-                            for item in raw_quizzes
-                        ]
-                    else:
-                        quizzes = default_list
+        parsed = []
+        for item in raw_quizzes:
+            if not isinstance(item, dict):
+                return None
+            question = item.get("question")
+            choices = item.get("choices")
+            answer = item.get("answer")
 
-                    best_score = (
-                        raw_best
-                        if isinstance(raw_best, int) and not isinstance(raw_best, bool) and raw_best >= 0
-                        else 0
-                    )
-                    has_played = bool(raw_played) or best_score > 0
-                    return quizzes, best_score, has_played
+            if (
+                not isinstance(question, str)
+                or not question.strip()
+                or not isinstance(choices, list)
+                or len(choices) != 4
+                or not all(isinstance(c, str) and c.strip() for c in choices)
+                or not isinstance(answer, int)
+                or isinstance(answer, bool)
+                or not (1 <= answer <= 4)
+            ):
+                return None
 
-                if isinstance(data, list) and data:
-                    quizzes = [
-                        Quiz(item["question"], item["choices"], item["answer"])
-                        for item in data
-                    ]
-                    return quizzes, 0, False
-            except (json.JSONDecodeError, KeyError, TypeError, OSError):
-                print("\n⚠️  저장된 상태 파일이 손상되어 기본 데이터로 복구합니다.\n")
+            parsed.append(Quiz(question.strip(), [c.strip() for c in choices], answer))
 
-        return default_list, 0, False
+        return parsed
+
+    def load_state(self):
+        default_list = self._build_default_quizzes()
+        if not os.path.exists(self.state_file):
+            return default_list, 0, False
+
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict):
+                print(
+                    "\n⚠️  state.json 형식이 올바르지 않아 기본 퀴즈 데이터로 초기화합니다.\n"
+                )
+                return default_list, 0, False
+
+            quizzes = self._parse_quizzes(data.get("quizzes"))
+            if quizzes is None:
+                print(
+                    "\n⚠️  state.json의 퀴즈 데이터가 손상되어 기본 퀴즈 데이터로 복구합니다.\n"
+                )
+                quizzes = default_list
+
+            raw_best = data.get("best_score", 0)
+            if (
+                isinstance(raw_best, int)
+                and not isinstance(raw_best, bool)
+                and raw_best >= 0
+            ):
+                best_score = raw_best
+            else:
+                print(
+                    "\n⚠️  state.json의 최고 점수 데이터가 손상되어 0점으로 복구합니다.\n"
+                )
+                best_score = 0
+
+            raw_played = data.get("has_played", False)
+            has_played = bool(raw_played) or best_score > 0
+            print(
+                f"\n📥 저장된 데이터를 불러왔습니다. (퀴즈 {len(quizzes)}개, 최고점수 {best_score}점)\n"
+            )
+            return quizzes, best_score, has_played
+
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            print(
+                "\n⚠️  state.json 파일을 읽는 중 오류가 발생해 기본 데이터로 복구합니다.\n"
+            )
+            return default_list, 0, False
 
     def save_state(self):
         payload = {
@@ -65,59 +105,72 @@ class QuizGame:
             with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
         except OSError:
-            print("\n⚠️  파일 저장 중 오류가 발생했습니다.\n")
+            print("\n⚠️  state.json 저장 중 파일 입출력 오류가 발생했습니다.\n")
+
+    def _read_non_empty_text(self, prompt, empty_message):
+        while True:
+            text = input(prompt).strip()
+            if text:
+                return text
+            print(empty_message)
+
+    def _read_int_in_range(
+        self,
+        prompt,
+        min_val,
+        max_val,
+        empty_message,
+        nan_message,
+        range_message,
+    ):
+        while True:
+            raw = input(prompt).strip()
+            if not raw:
+                print(empty_message)
+                continue
+            try:
+                num = int(raw)
+            except ValueError:
+                print(nan_message)
+                continue
+            if num < min_val or num > max_val:
+                print(range_message)
+                continue
+            return num
 
     def play_quiz(self):
         if not self.quizzes:
-            print(
-                "\n⚠️  등록된 퀴즈가 없습니다. 퀴즈를 먼저 추가해주세요.\n"
-            )
+            print("\n⚠️  등록된 퀴즈가 없습니다. 퀴즈를 먼저 추가해주세요.\n")
             return
 
         score = 0
         total_quizzes = len(self.quizzes)
-
         print(f"\n🚀 총 {total_quizzes}개의 퀴즈를 시작합니다!")
 
         for i, q in enumerate(self.quizzes, start=1):
-            while True:
-                print("\n" + "-" * 40)
-                print(f"[문제 {i} / {total_quizzes}] {q.question}")
-                print("-" * 40)
+            print("\n" + "-" * 40)
+            print(f"[문제 {i} / {total_quizzes}] {q.question}")
+            print("-" * 40)
 
-                for idx, choice in enumerate(q.choices, start=1):
-                    print(f"{idx}. {choice}")
+            for idx, choice in enumerate(q.choices, start=1):
+                print(f"{idx}. {choice}")
 
-                user_input = input("\n정답 번호 입력: ").strip()
+            ans_num = self._read_int_in_range(
+                prompt="\n정답 번호 입력: ",
+                min_val=1,
+                max_val=4,
+                empty_message="\n⚠️  빈 입력입니다. 숫자를 입력해주세요.",
+                nan_message="\n⚠️  숫자 변환 실패! 1~4 사이의 숫자를 입력해주세요.",
+                range_message="\n⚠️  허용 범위 밖의 숫자입니다. 1~4 사이의 숫자를 입력해주세요.",
+            )
 
-                if not user_input:
-                    print("\n⚠️  빈 입력입니다. 숫자를 입력해주세요.")
-                    continue
-
-                try:
-                    ans_num = int(user_input)
-                except ValueError:
-                    print(
-                        "\n⚠️  숫자 변환 실패! 1~4 사이의 숫자를 입력해주세요."
-                    )
-                    continue
-
-                if ans_num < 1 or ans_num > 4:
-                    print(
-                        "\n⚠️  허용 범위 밖의 숫자입니다. 1~4 사이의 숫자를 입력해주세요."
-                    )
-                    continue
-
-                if q.check_answer(ans_num):
-                    print("\n🟢 정답입니다! 👏👏")
-                    score += 1
-                else:
-                    print(f"\n❌ 오답입니다! 정답은 {q.answer}번입니다.")
-
-                break
+            if q.check_answer(ans_num):
+                print("\n🟢 정답입니다! 👏👏")
+                score += 1
+            else:
+                print(f"\n❌ 오답입니다! 정답은 {q.answer}번입니다.")
 
         self.has_played = True
-
         print("\n" + "=" * 40)
         print(f"🔥 퀴즈 종료! 총 {total_quizzes}문제 중 {score}문제를 맞혔습니다!")
         print("=" * 40)
@@ -133,37 +186,27 @@ class QuizGame:
     def add_quiz(self):
         print("\n📌 새로운 퀴즈를 추가합니다.\n")
 
-        while True:
-            question = input("문제를 입력하세요: ").strip()
-            if question:
-                break
-            print("\n⚠️  빈 입력입니다. 문제를 입력해주세요.\n")
+        question = self._read_non_empty_text(
+            prompt="문제를 입력하세요: ",
+            empty_message="\n⚠️  빈 입력입니다. 문제를 입력해주세요.\n",
+        )
 
         choices = []
         for i in range(1, 5):
-            while True:
-                choice = input(f"선택지 {i}: ").strip()
-                if choice:
-                    choices.append(choice)
-                    break
-                print(f"\n⚠️  빈 입력입니다. 선택지 {i} 내용을 입력해주세요.\n")
+            choice = self._read_non_empty_text(
+                prompt=f"선택지 {i}: ",
+                empty_message=f"\n⚠️  빈 입력입니다. 선택지 {i} 내용을 입력해주세요.\n",
+            )
+            choices.append(choice)
 
-        while True:
-            ans_str = input("정답 번호 (1-4): ").strip()
-            if not ans_str:
-                print("\n⚠️  빈 입력입니다. 1-4 사이의 숫자를 입력하세요.\n")
-                continue
-            try:
-                ans_num = int(ans_str)
-            except ValueError:
-                print("\n⚠️  숫자 변환 실패! 1-4 사이의 숫자를 입력하세요.\n")
-                continue
-            if ans_num < 1 or ans_num > 4:
-                print(
-                    "\n⚠️  허용 범위 밖의 숫자입니다. 1-4 사이의 숫자를 입력하세요.\n"
-                )
-                continue
-            break
+        ans_num = self._read_int_in_range(
+            prompt="정답 번호 (1-4): ",
+            min_val=1,
+            max_val=4,
+            empty_message="\n⚠️  빈 입력입니다. 1-4 사이의 숫자를 입력하세요.\n",
+            nan_message="\n⚠️  숫자 변환 실패! 1-4 사이의 숫자를 입력하세요.\n",
+            range_message="\n⚠️  허용 범위 밖의 숫자입니다. 1-4 사이의 숫자를 입력하세요.\n",
+        )
 
         self.quizzes.append(Quiz(question, choices, ans_num))
         self.save_state()
@@ -202,23 +245,14 @@ class QuizGame:
                 print(" 5. 종료")
                 print("=" * 40)
 
-                choice = input("선택: ").strip()
-
-                if not choice:
-                    print("\n⚠️  빈 입력입니다. 1-5 사이의 숫자를 입력하세요.\n")
-                    continue
-
-                try:
-                    menu_num = int(choice)
-                except ValueError:
-                    print("\n⚠️  숫자 변환 실패! 1-5 사이의 숫자를 입력하세요.\n")
-                    continue
-
-                if menu_num < 1 or menu_num > 5:
-                    print(
-                        "\n⚠️  허용 범위 밖의 숫자입니다. 1-5 사이의 숫자를 입력하세요.\n"
-                    )
-                    continue
+                menu_num = self._read_int_in_range(
+                    prompt="선택: ",
+                    min_val=1,
+                    max_val=5,
+                    empty_message="\n⚠️  빈 입력입니다. 1-5 사이의 숫자를 입력하세요.\n",
+                    nan_message="\n⚠️  숫자 변환 실패! 1-5 사이의 숫자를 입력하세요.\n",
+                    range_message="\n⚠️  허용 범위 밖의 숫자입니다. 1-5 사이의 숫자를 입력하세요.\n",
+                )
 
                 if menu_num == 1:
                     self.play_quiz()
