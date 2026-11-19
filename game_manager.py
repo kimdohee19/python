@@ -9,33 +9,48 @@ class QuizGame:
     def __init__(self, state_file="state.json"):
         os.system("")
         self.state_file = state_file
-        self.quizzes = self.load_quizzes()
-        self.best_score = 0
+        self.quizzes, self.best_score, self.has_played = self.load_state()
 
-    def load_quizzes(self):
+    def load_state(self):
+        default_list = [
+            Quiz(q.question, list(q.choices), q.answer) for q in default_quizzes
+        ]
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if isinstance(data, dict) and isinstance(data.get("quizzes"), list):
-                    raw_list = data["quizzes"]
-                elif isinstance(data, list):
-                    raw_list = data
-                else:
-                    raw_list = None
 
-                if raw_list is not None:
-                    loaded = [
+                if isinstance(data, dict):
+                    raw_quizzes = data.get("quizzes")
+                    raw_best = data.get("best_score", 0)
+                    raw_played = data.get("has_played", False)
+
+                    if isinstance(raw_quizzes, list) and raw_quizzes:
+                        quizzes = [
+                            Quiz(item["question"], item["choices"], item["answer"])
+                            for item in raw_quizzes
+                        ]
+                    else:
+                        quizzes = default_list
+
+                    best_score = (
+                        raw_best
+                        if isinstance(raw_best, int) and not isinstance(raw_best, bool) and raw_best >= 0
+                        else 0
+                    )
+                    has_played = bool(raw_played) or best_score > 0
+                    return quizzes, best_score, has_played
+
+                if isinstance(data, list) and data:
+                    quizzes = [
                         Quiz(item["question"], item["choices"], item["answer"])
-                        for item in raw_list
+                        for item in data
                     ]
-                    if loaded:
-                        return loaded
+                    return quizzes, 0, False
             except (json.JSONDecodeError, KeyError, TypeError, OSError):
-                pass
-        return [
-            Quiz(q.question, list(q.choices), q.answer) for q in default_quizzes
-        ]
+                print("\n⚠️  저장된 상태 파일이 손상되어 기본 데이터로 복구합니다.\n")
+
+        return default_list, 0, False
 
     def save_state(self):
         payload = {
@@ -44,6 +59,7 @@ class QuizGame:
                 for q in self.quizzes
             ],
             "best_score": self.best_score,
+            "has_played": self.has_played,
         }
         try:
             with open(self.state_file, "w", encoding="utf-8") as f:
@@ -100,6 +116,8 @@ class QuizGame:
 
                 break
 
+        self.has_played = True
+
         print("\n" + "=" * 40)
         print(f"🔥 퀴즈 종료! 총 {total_quizzes}문제 중 {score}문제를 맞혔습니다!")
         print("=" * 40)
@@ -109,6 +127,8 @@ class QuizGame:
             print(f"🏅 새로운 최고 점수 경신: {self.best_score}점! (축하합니다!)")
         else:
             print(f"📌 이번 점수: {score}점 (최고 점수: {self.best_score}점)")
+
+        self.save_state()
 
     def add_quiz(self):
         print("\n📌 새로운 퀴즈를 추가합니다.\n")
@@ -160,6 +180,15 @@ class QuizGame:
             print(f"[{idx}] {q.question}")
         print("-" * 40 + "\n")
 
+    def show_best_score(self):
+        if not self.has_played and self.best_score == 0:
+            print("\n⚠️  아직 퀴즈를 풀지 않았습니다. 1번 메뉴에서 퀴즈를 풀어보세요!\n")
+            return
+
+        print("\n" + "=" * 40)
+        print(f"🏆 현재 최고 점수: {self.best_score}점")
+        print("=" * 40 + "\n")
+
     def run_menu(self):
         try:
             while True:
@@ -198,11 +227,13 @@ class QuizGame:
                 elif menu_num == 3:
                     self.list_quizzes()
                 elif menu_num == 4:
-                    print("\n[알림] 점수 확인 기능은 추후 구현됩니다.\n")
+                    self.show_best_score()
                 elif menu_num == 5:
+                    self.save_state()
                     print("\n프로그램을 종료합니다. 이용해 주셔서 감사합니다.\n")
                     break
         except (KeyboardInterrupt, EOFError):
+            self.save_state()
             print(
                 "\n\n⚠️  입력 중단 신호가 감지되었습니다. 안전하게 종료합니다.\n"
             )
