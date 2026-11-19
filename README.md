@@ -40,3 +40,4 @@ python game_manager.py
     }
   ],
   "best_score": 5}
+복제 테스트 수정
